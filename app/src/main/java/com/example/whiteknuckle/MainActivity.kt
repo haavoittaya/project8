@@ -1,10 +1,11 @@
 package com.example.whiteknuckle
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Intent
+import android.net.VpnService
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -13,19 +14,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,26 +58,71 @@ vp8:
 """.trimIndent()
 
 class MainActivity : ComponentActivity() {
+    private lateinit var vpnPermissionLauncher: ActivityResultLauncher<Intent>
+    private var pendingVpnStart = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        vpnPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            if (result.resultCode == RESULT_OK && pendingVpnStart) {
+                startVpn()
+            } else {
+                Toast.makeText(this, "VPN permission denied", Toast.LENGTH_SHORT).show()
+            }
+            pendingVpnStart = false
+        }
+
         enableEdgeToEdge()
         setContent {
             WhiteknuckleTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    MainScreen(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+                    MainScreen(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        onStartVpn = { requestAndStartVpn() },
+                        onStopVpn = { stopVpn() }
+                    )
                 }
             }
         }
     }
+
+    private fun requestAndStartVpn() {
+        val prepareIntent = VpnService.prepare(this)
+        if (prepareIntent != null) {
+            pendingVpnStart = true
+            vpnPermissionLauncher.launch(prepareIntent)
+        } else {
+            startVpn()
+        }
+    }
+
+    private fun startVpn() {
+        val intent = Intent(this, LocalVpnService::class.java).apply {
+            action = LocalVpnService.ACTION_START
+        }
+        ContextCompat.startForegroundService(this, intent)
+    }
+
+    private fun stopVpn() {
+        val intent = Intent(this, LocalVpnService::class.java).apply {
+            action = LocalVpnService.ACTION_STOP
+        }
+        ContextCompat.startForegroundService(this, intent)
+    }
 }
 
 @Composable
-fun MainScreen(modifier: Modifier = Modifier) {
+fun MainScreen(
+    modifier: Modifier = Modifier,
+    onStartVpn: () -> Unit,
+    onStopVpn: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isRunning by OlcrtcService.isRunning.collectAsState()
-    val logs by OlcrtcService.logs.collectAsState()
-    val listState = rememberLazyListState()
+    val isVpnRunning by LocalVpnService.isRunning.collectAsState()
     val sharedPreferences = remember(context) {
         context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
     }
@@ -92,12 +131,6 @@ fun MainScreen(modifier: Modifier = Modifier) {
     }
 
     var rawYaml by remember { mutableStateOf(initialYaml) }
-
-    LaunchedEffect(logs.size) {
-        if (logs.isNotEmpty()) {
-            listState.animateScrollToItem(logs.lastIndex)
-        }
-    }
 
     Column(
         modifier = modifier.fillMaxSize(),
@@ -139,8 +172,10 @@ fun MainScreen(modifier: Modifier = Modifier) {
 
         Button(
             onClick = {
-                val stopIntent = Intent(context, OlcrtcService::class.java)
-                context.stopService(stopIntent)
+                val stopIntent = Intent(context, OlcrtcService::class.java).apply {
+                    action = OlcrtcService.ACTION_STOP
+                }
+                ContextCompat.startForegroundService(context, stopIntent)
             },
             enabled = isRunning,
             modifier = Modifier.fillMaxWidth()
@@ -149,41 +184,28 @@ fun MainScreen(modifier: Modifier = Modifier) {
         }
 
         Button(
+            onClick = onStartVpn,
+            enabled = !isVpnRunning,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Start VPN")
+        }
+
+        Button(
+            onClick = onStopVpn,
+            enabled = isVpnRunning,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Stop VPN")
+        }
+
+        Button(
             onClick = {
-                val logsText = OlcrtcService.logs.value.joinToString("\n")
-                val clipboard = context.getSystemService(ClipboardManager::class.java)
-                clipboard.setPrimaryClip(ClipData.newPlainText("Olcrtc logs", logsText))
-                Toast.makeText(context, "Логи скопированы", Toast.LENGTH_SHORT).show()
+                context.startActivity(Intent(context, LogsActivity::class.java))
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Copy Logs")
-        }
-
-        HorizontalDivider()
-
-        SelectionContainer(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-        ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize()
-            ) {
-                itemsIndexed(logs) { index, line ->
-                    Text(
-                        text = line,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 2.dp)
-                    )
-                    if (index < logs.lastIndex) {
-                        HorizontalDivider()
-                    }
-                }
-            }
+            Text("Open Logs")
         }
     }
 }

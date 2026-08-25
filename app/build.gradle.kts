@@ -15,6 +15,9 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -32,6 +35,19 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    sourceSets {
+        getByName("main") {
+            jniLibs {
+                directories.add("src/main/jniLibs")
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
     packaging {
         jniLibs {

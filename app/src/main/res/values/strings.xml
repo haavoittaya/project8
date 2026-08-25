@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">whiteknuckle</string>
+    <string name="vpn_notification_channel_name">Local VPN</string>
+    <string name="vpn_notification_title">VPN active</string>
+    <string name="vpn_notification_text">All device traffic is routed via local SOCKS5 proxy</string>
+    <string name="vpn_session_name">Local SOCKS5 VPN</string>
 </resources>

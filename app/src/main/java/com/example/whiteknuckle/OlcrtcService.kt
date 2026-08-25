@@ -1,6 +1,8 @@
 package com.example.whiteknuckle
 
 import android.app.NotificationChannel
+import java.io.IOException
+import java.io.InterruptedIOException
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
@@ -28,6 +30,8 @@ class OlcrtcService : Service() {
         private const val CHANNEL_ID = "olcrtc_channel"
         private const val NOTIFICATION_ID = 1001
 
+        const val ACTION_STOP = "com.example.whiteknuckle.action.STOP_OLCRTC"
+
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
 
@@ -41,6 +45,12 @@ class OlcrtcService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+
+        if (intent?.action == ACTION_STOP) {
+            stopService()
+            return START_NOT_STICKY
+        }
+
         val binaryFile = File(applicationInfo.nativeLibraryDir, "libolcrtc-android.so")
         val binaryPath = binaryFile.absolutePath
         val configFile = File(filesDir, "client.yaml")
@@ -135,8 +145,16 @@ class OlcrtcService : Service() {
                 val runningProcess = process ?: return@launch
 
                 launch {
-                    runningProcess.inputStream.bufferedReader().useLines { lines ->
-                        lines.forEach { appendLog(it) }
+                    try {
+                        runningProcess.inputStream.bufferedReader().useLines { lines ->
+                            lines.forEach { line ->
+                                appendLog(line)
+                            }
+                        }
+                    } catch (e: InterruptedIOException) {
+                        appendLog("Olcrtc output reader stopped")
+                    } catch (e: IOException) {
+                        appendLog("Olcrtc output reader error: ${e.message}")
                     }
                 }
 
