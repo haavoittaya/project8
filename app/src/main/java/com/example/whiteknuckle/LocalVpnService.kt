@@ -1,6 +1,7 @@
 package com.example.whiteknuckle
 
 import android.app.NotificationChannel
+import java.net.InetAddress
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -40,7 +41,7 @@ class LocalVpnService : VpnService() {
         private const val NOTIFICATION_ID = 2001
         private const val VPN_ADDRESS = "10.0.0.2"
         private const val VPN_PREFIX = 24
-        private const val VPN_DNS = "1.1.1.1"
+        private const val VPN_DNS = "198.18.0.2"
         private const val TUNNEL_MTU = 1500
         private const val SOCKS_HOST = "127.0.0.1"
         private const val SOCKS_PORT = 8808
@@ -117,8 +118,8 @@ class LocalVpnService : VpnService() {
                     ?: throw IllegalStateException("Failed to establish TUN interface")
 
                 // 2. Duplicate and detach file descriptor
-                val tunFd = tunInterface?.dup()?.detachFd()
-                    ?: throw IllegalStateException("Failed to duplicate/detach TUN fd")
+                val tunFd = tunInterface?.fd
+                    ?: throw IllegalStateException("Failed to get TUN fd")
 
                 Log.i(TAG, "TUN file descriptor: $tunFd")
 
@@ -132,6 +133,8 @@ class LocalVpnService : VpnService() {
                     Log.e(TAG, "SOCKS5 proxy at $SOCKS_HOST:$SOCKS_PORT is not reachable")
                     throw IllegalStateException("SOCKS5 proxy unavailable")
                 }
+
+                testDns()
                 delay(500)
 
                 // 5. Проверка файла конфигурации
@@ -221,6 +224,17 @@ class LocalVpnService : VpnService() {
         }
     }
 
+    private fun testDns(): Boolean {
+        return try {
+            val address = InetAddress.getByName("example.com")
+            Log.i(TAG, "DNS test: example.com -> ${address.hostAddress}")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "DNS test failed", e)
+            false
+        }
+    }
+
     private fun stopTunnel(stopService: Boolean = true) {
         HevSocks5TunnelBridge.stopTunnel()
         tunnelJob?.cancel()
@@ -232,6 +246,8 @@ class LocalVpnService : VpnService() {
             stopSelf()
         }
     }
+
+
 
     private fun closeTun() {
         try {
@@ -271,6 +287,7 @@ class LocalVpnService : VpnService() {
             out.println("  name: tun0")
             out.println("  mtu: $TUNNEL_MTU")
             out.println("  ipv4: $VPN_ADDRESS")
+
             out.println("socks5:")
             out.println("  address: $SOCKS_HOST")
             out.println("  port: $SOCKS_PORT")
@@ -280,6 +297,13 @@ class LocalVpnService : VpnService() {
                 out.println("  username: '$username'")
                 out.println("  password: '$password'")
             }
+
+            out.println("mapdns:")
+            out.println("  address: 198.18.0.2")
+            out.println("  port: 53")
+            out.println("  network: 100.64.0.0")
+            out.println("  netmask: 255.192.0.0")
+            out.println("  cache-size: 10000")
         }
 
         return configFile
