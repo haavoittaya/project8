@@ -117,6 +117,7 @@ class LocalVpnService : VpnService() {
                 tunInterface = builder.establish()
                     ?: throw IllegalStateException("Failed to establish TUN interface")
 
+
                 // 2. Duplicate and detach file descriptor
                 val tunFd = tunInterface?.fd
                     ?: throw IllegalStateException("Failed to get TUN fd")
