@@ -101,17 +101,112 @@ class LocalVpnService : VpnService() {
         tunnelJob = serviceScope.launch {
             try {
                 // 1. Build VPN interface
+                val routingPreferences = getSharedPreferences(
+                    "vpn_routing",
+                    Context.MODE_PRIVATE
+                )
+
+                val routingMode = routingPreferences.getString(
+                    "mode",
+                    "all"
+                ) ?: "all"
+
+                val selectedApps = routingPreferences.getStringSet(
+                    "selected_apps",
+                    emptySet()
+                ) ?: emptySet()
+
+                Log.i(
+                    TAG,
+                    "VPN routing mode=$routingMode selectedApps=$selectedApps"
+                )
+
                 val builder = Builder()
                     .setSession(getString(R.string.vpn_session_name))
                     .setMtu(TUNNEL_MTU)
                     .addAddress(VPN_ADDRESS, VPN_PREFIX)
                     .addRoute("0.0.0.0", 0)
                     .addDnsServer(VPN_DNS)
-
                 try {
-                    builder.addDisallowedApplication(packageName)
+                    when (routingMode) {
+
+                        "include" -> {
+                            // В режиме "Только выбранные" можно использовать
+                            // ТОЛЬКО addAllowedApplication().
+                            //
+                            // Само приложение whiteknuckle сюда не попадает,
+                            // поэтому оно автоматически остаётся вне VPN.
+                            for (appPackage in selectedApps) {
+                                try {
+                                    builder.addAllowedApplication(appPackage)
+                                } catch (e: PackageManager.NameNotFoundException) {
+                                    Log.w(
+                                        TAG,
+                                        "Selected application not found: $appPackage",
+                                        e
+                                    )
+                                }
+                            }
+
+                            Log.i(
+                                TAG,
+                                "VPN include mode: $selectedApps"
+                            )
+                        }
+
+                        "exclude" -> {
+                            // В режиме "Все кроме выбранных" используем
+                            // только addDisallowedApplication().
+                            for (appPackage in selectedApps) {
+                                try {
+                                    builder.addDisallowedApplication(appPackage)
+                                } catch (e: PackageManager.NameNotFoundException) {
+                                    Log.w(
+                                        TAG,
+                                        "Excluded application not found: $appPackage",
+                                        e
+                                    )
+                                }
+                            }
+
+                            // Само приложение всегда исключаем из VPN,
+                            // чтобы его собственный SOCKS5 не попал обратно
+                            // в этот же VPN.
+                            try {
+                                builder.addDisallowedApplication(packageName)
+                            } catch (e: PackageManager.NameNotFoundException) {
+                                throw IllegalStateException(
+                                    "Failed to exclude own application from VPN",
+                                    e
+                                )
+                            }
+
+                            Log.i(
+                                TAG,
+                                "VPN exclude mode: $selectedApps"
+                            )
+                        }
+
+                        else -> {
+                            // "Все приложения"
+                            // Всё идёт через VPN, кроме whiteknuckle.
+                            try {
+                                builder.addDisallowedApplication(packageName)
+                            } catch (e: PackageManager.NameNotFoundException) {
+                                throw IllegalStateException(
+                                    "Failed to exclude own application from VPN",
+                                    e
+                                )
+                            }
+
+                            Log.i(TAG, "VPN routing mode: all")
+                        }
+                    }
                 } catch (e: PackageManager.NameNotFoundException) {
-                    throw IllegalStateException("Failed to disallow app: $packageName", e)
+                    throw IllegalStateException(
+                        "Failed to configure VPN application routing",
+                        e
+                    )
                 }
 
                 tunInterface = builder.establish()
@@ -236,12 +331,18 @@ class LocalVpnService : VpnService() {
     }
 
     private fun stopTunnel(stopService: Boolean = true) {
+        Log.i(TAG, "Stopping VPN tunnel")
+
         HevSocks5TunnelBridge.stopTunnel()
-        tunnelJob?.cancel()
-        tunnelJob = null
+
         _isRunning.value = false
+
         closeTun()
+
+        tunnelJob = null
+
         stopForeground(STOP_FOREGROUND_REMOVE)
+
         if (stopService) {
             stopSelf()
         }
